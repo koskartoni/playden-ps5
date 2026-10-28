@@ -1,10 +1,10 @@
 # CI para playden-ps5 · borrador de PR (28-oct-2026)
 # Objetivo: que ningun cambio rompa el build del host ni el del titulo PS5, sin necesitar consola.
 # Cada decision viene de un fallo observado en un run real, no de una suposicion:
-#  - host en macos-15 (arm64): unico host soportado (docs/building.md); macOS 14 esta deprecado.
+#  - host en macos-15 (arm64): unico host soportado (docs/building.md); GitHub marca macOS 14 como deprecado.
 #  - fetch-depth 0: ui_comparison_fixture hace `git ls-tree` de un commit historico.
 #  - SDL_VIDEO* en dummy: los tests graficos abren ventana y el runner no tiene sesion grafica.
-#  - reintento en serie con --timeout 120: separa contencion de bug real en los tests con tiempos.
+#  - http_client y homebrew_runtime_host en un paso aparte no bloqueante: dependen de tiempos.
 #  - PS5 en macOS con LLVM 18.1.8: dependencies.lock.json exige "SDK v0.43 and LLVM 18.1.8" y en
 #    Linux el configure aborta con "Pinned ps5 archive hash mismatch: libcurl.a".
 #  - concurrency: solo se cancela en PRs; en main los runs hacen cola.
