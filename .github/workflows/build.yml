@@ -14,9 +14,11 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Solo se cancela lo obsoleto en PRs. En main, un workflow_dispatch manual cancelaba el run del push
+# (paso de verdad: "Canceling since a higher priority waiting request for build-refs/heads/main exists").
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
