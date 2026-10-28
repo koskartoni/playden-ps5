@@ -1,0 +1,102 @@
+# CI minima para playden-ps5 · borrador para PR (28-oct-2026)
+# Objetivo: que ningun cambio rompa el build del host ni el del titulo PS5, sin necesitar consola.
+# Decisiones de diseno y su motivo:
+#  - host en macos-15 (arm64): unico host soportado (docs/building.md) y el macOS 14 esta deprecado en
+#    los runners de GitHub (issue actions/runner-images#13518).
+#  - PS5 en ubuntu-24.04 con llvm-18: scripts/with-env.sh resuelve LLVM_CONFIG=llvm-config-18 fuera de macOS.
+#  - El SDK y las deps NO se instalan a mano: scripts/fetch-deps.sh los baja y verifica contra dependencies.lock.json.
+#  - Sin job de formato: el repo aun no tiene .clang-format. Va en un PR aparte para no mezclar ruido.
+name: build
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  host:
+    name: host (macOS arm64) · build + ctest
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Toolchain
+        run: |
+          brew install --quiet cmake ninja pkgconf sdl2-compat llvm@18 python
+          echo "LLVM_CONFIG=$(brew --prefix llvm@18)/bin/llvm-config" >> "$GITHUB_ENV"
+      # La revision del submodulo UI fija los atlases de fuentes: si avanza sin tocar el lock, la cache
+      # anterior serviria atlases rancios. Por eso la clave la incluye.
+      - name: Pinned UI revision
+        id: ui
+        run: echo "rev=$(git submodule status third_party/ps5-homebrew-ui | cut -c2-41)" >> "$GITHUB_OUTPUT"
+      - name: Cache host network deps
+        uses: actions/cache@v4
+        with:
+          path: scripts/network-deps/.deps/host
+          key: host-netdeps-${{ runner.os }}-${{ hashFiles('dependencies.lock.json') }}
+      - name: Cache font atlases
+        uses: actions/cache@v4
+        with:
+          path: build/homebrew-fonts
+          key: host-fonts-${{ runner.os }}-${{ steps.ui.outputs.rev }}
+      - name: Build host app and test binaries
+        run: |
+          scripts/build-homebrew.sh
+          cmake --build --preset homebrew-host
+      - name: Tests
+        run: ctest --preset homebrew-host --output-on-failure --parallel 4
+
+  ps5:
+    name: PS5 · compilar y empaquetar
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Toolchain (llvm 18 + utilidades)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang-18 lld-18 llvm-18 cmake ninja-build pkg-config \
+            python3 curl unzip zip xz-utils libdigest-sha-perl
+      - name: Cache deps PS5 pinneadas
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            scripts/network-deps/.deps/ps5
+          key: ps5-deps-${{ runner.os }}-${{ hashFiles('dependencies.lock.json') }}
+      # scripts/with-env.sh ya usa deps/ps5-payload-sdk por defecto (linea 6); no hace falta exportar nada.
+      - name: Fetch deps pinneadas (SDK, opengl, builtins)
+        run: scripts/fetch-deps.sh
+      - name: Helper payload (root helper del titulo)
+        run: scripts/build-lapy-helper.sh
+      - name: Paquete PS5
+        run: scripts/build-homebrew-ps5.sh
+      - name: Empaquetar artefacto
+        run: |
+          cd build/homebrew-ps5/dist
+          zip -qr "$GITHUB_WORKSPACE/FAKE77031.zip" FAKE77031
+          cd "$GITHUB_WORKSPACE"
+          sha256sum FAKE77031.zip > SHA256SUMS
+          cat SHA256SUMS
+      - name: Subir artefacto
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ps5-package
+          path: |
+            FAKE77031.zip
+            SHA256SUMS
+          retention-days: 7
